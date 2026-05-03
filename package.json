@@ -4,6 +4,7 @@
   "description": "Large language models and functionality for Saltcorn",
   "main": "index.js",
   "dependencies": {
+    "@ai-sdk/google": "^3.0.67",
     "@saltcorn/data": "^0.9.0",
     "node-fetch": "2.6.9",
     "underscore": "1.13.6",

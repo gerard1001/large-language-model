@@ -22,9 +22,11 @@ const {
   embed,
   embedMany,
   experimental_transcribe,
+  experimental_generateImage,
 } = require("ai");
 const { createOpenAI } = require("@ai-sdk/openai");
 const { createAnthropic } = require("@ai-sdk/anthropic");
+const { createGoogleGenerativeAI } = require("@ai-sdk/google");
 const OpenAI = require("openai");
 const { ElevenLabsClient } = require("@elevenlabs/elevenlabs-js");
 const { NO_TEMP_MODELS } = require("./constants");
@@ -39,7 +41,10 @@ const getEmbedding = async (config, opts) => {
         {
           provider: config.ai_sdk_provider,
           apiKey: config.api_key,
+          google_api_key: config.google_api_key,
           embed_model: opts?.embed_model || config.embed_model || config.model,
+          embed_task_type: config.embed_task_type,
+          embed_dimensions: config.embed_dimensions,
         },
         opts,
       );
@@ -117,9 +122,53 @@ const getImageGeneration = async (config, opts) => {
         },
         opts,
       );
+    case "AI SDK":
+      if (config.ai_sdk_provider === "Google")
+        return await getImageGenGoogleAISDK(config, opts);
+      throw new Error(
+        "Image generation not implemented for this AI SDK provider",
+      );
     default:
       throw new Error("Image generation not implemented for this backend");
   }
+};
+
+const getImageGenGoogleAISDK = async (config, opts) => {
+  const google_api_key =
+    opts?.api_key || config.api_key || config.google_api_key;
+  const googleProvider = createGoogleGenerativeAI({ apiKey: google_api_key });
+  const use_model =
+    opts?.model || config.image_model || "imagen-4.0-generate-001";
+  const imageModel = googleProvider.image(use_model);
+
+  const providerOpts = {};
+  if (opts?.aspectRatio || config.image_aspect_ratio)
+    providerOpts.aspectRatio = opts.aspectRatio || config.image_aspect_ratio;
+  if (opts?.personGeneration || config.person_generation)
+    providerOpts.personGeneration =
+      opts.personGeneration || config.person_generation;
+
+  if (opts?.debugResult)
+    console.log("Google image request", {
+      model: use_model,
+      prompt: opts.prompt,
+      providerOpts,
+    });
+
+  const result = await experimental_generateImage({
+    model: imageModel,
+    prompt: opts.prompt,
+    ...(Object.keys(providerOpts).length
+      ? { providerOptions: { google: providerOpts } }
+      : {}),
+  });
+
+  if (opts?.debugResult) console.log("Google image response", result);
+
+  const img = result.image;
+  if (img?.base64) return { b64_json: img.base64 };
+  if (img?.url) return { url: img.url };
+  return result;
 };
 
 const getAudioTranscription = async (
@@ -515,6 +564,48 @@ const getAiSdkModel = ({ config, alt_config, userCfg }, isEmbedding) => {
           userCfg.api_key || userCfg.apiKey || use_config.anthropic_api_key,
       });
       return anthropic(model_name);
+
+    case "Google": {
+      const google_api_key = use_config.google_api_key;
+      const googleProvider = createGoogleGenerativeAI({
+        apiKey: google_api_key,
+        // baseURL: `https://generativelanguage.googleapis.com/v1beta`,
+      });
+
+      if (isEmbedding) {
+        const embedOpts = {};
+        if (use_config.embed_task_type)
+          embedOpts.taskType = use_config.embed_task_type;
+        if (use_config.embed_dimensions)
+          embedOpts.outputDimensionality = parseInt(
+            use_config.embed_dimensions,
+          );
+        // return googleProvider.textEmbeddingModel(model_name, embedOpts);
+        return googleProvider.embeddingModel(model_name, embedOpts);
+      }
+
+      const modelOpts = {};
+      if (use_config.structuredOutputs === false)
+        modelOpts.structuredOutputs = false;
+      if (use_config.safety_settings?.length)
+        modelOpts.safetySettings = use_config.safety_settings;
+      if (use_config.thinking_budget)
+        modelOpts.thinkingConfig = {
+          thinkingBudget: parseInt(use_config.thinking_budget),
+        };
+      else if (use_config.thinking_level)
+        modelOpts.thinkingConfig = { thinkingLevel: use_config.thinking_level };
+      if (use_config.audio_timestamp) modelOpts.audioTimestamp = true;
+      if (use_config.media_resolution)
+        modelOpts.mediaResolution = use_config.media_resolution;
+      if (use_config.cached_content)
+        modelOpts.cachedContent = use_config.cached_content;
+      if (use_config.service_tier)
+        modelOpts.serviceTier = use_config.service_tier;
+
+      return googleProvider(model_name, modelOpts);
+    }
+
     default:
       throw new Error("Provider not found: " + use_provider);
   }
@@ -585,13 +676,33 @@ const getCompletionAISDK = async (
   if (body.tools) {
     const prevTools = [...body.tools];
     body.tools = {};
+    const isGoogle = config.provider === "Google";
     prevTools.forEach((t) => {
+      const params = t.parameters || t.function.parameters;
       body.tools[t.name || t.function.name] = tool({
         description: t.description || t.function.description,
-        inputSchema: jsonSchema(t.parameters || t.function.parameters),
+        inputSchema: jsonSchema(
+          isGoogle ? sanitizeSchemaForGoogle(params) : params,
+        ),
       });
     });
   }
+
+  if (
+    config.provider === "Google" &&
+    (config.search_grounding || config.url_context || config.code_execution)
+  ) {
+    const google_api_key = config.google_api_key;
+    const googleProvider = createGoogleGenerativeAI({ apiKey: google_api_key });
+    if (!body.tools) body.tools = {};
+    if (config.search_grounding)
+      body.tools.googleSearch = googleProvider.tools.googleSearch();
+    if (config.url_context)
+      body.tools.urlContext = googleProvider.tools.urlContext();
+    if (config.code_execution)
+      body.tools.codeExecution = googleProvider.tools.codeExecution();
+  }
+
   if (body.response_format?.type === "json_schema" && !body.output) {
     body.output = Output.object({
       schema: jsonSchema(
@@ -1295,6 +1406,71 @@ const getEmbeddingGoogleVertex = async (config, opts, oauth2Client) => {
   });
   return embeddings;
 };
+
+const sanitizeSchemaForGoogle = (schema) => {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(sanitizeSchemaForGoogle);
+
+  const result = { ...schema };
+
+  // Google only accepts string enum values
+  if (Array.isArray(result.enum)) {
+    result.enum = result.enum.map((v) =>
+      typeof v === "string" ? v : String(v),
+    );
+    if (result.type && result.type !== "string") result.type = "string";
+  }
+
+  if (result.properties) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties).map(([k, v]) => [
+        k,
+        sanitizeSchemaForGoogle(v),
+      ]),
+    );
+    // Drop required entries that have no matching property
+    if (Array.isArray(result.required)) {
+      const defined = new Set(Object.keys(result.properties));
+      result.required = result.required.filter((k) => defined.has(k));
+      if (result.required.length === 0) delete result.required;
+    }
+  }
+
+  if (result.items) {
+    result.items = Array.isArray(result.items)
+      ? result.items.map(sanitizeSchemaForGoogle)
+      : sanitizeSchemaForGoogle(result.items);
+  }
+
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    if (Array.isArray(result[key])) {
+      result[key] = result[key].map(sanitizeSchemaForGoogle);
+    }
+  }
+
+  if (
+    result.additionalProperties &&
+    typeof result.additionalProperties === "object"
+  ) {
+    result.additionalProperties = sanitizeSchemaForGoogle(
+      result.additionalProperties,
+    );
+  }
+
+  for (const key of ["$defs", "definitions"]) {
+    if (result[key]) {
+      result[key] = Object.fromEntries(
+        Object.entries(result[key]).map(([k, v]) => [
+          k,
+          sanitizeSchemaForGoogle(v),
+        ]),
+      );
+    }
+  }
+
+  return result;
+};
+
 
 function lockDownSchema(schema) {
   if (!schema || typeof schema !== "object") return schema;

@@ -15,7 +15,12 @@ const {
   addImageMesssage,
   genericResponse,
 } = require("./generate");
-const { OPENAI_MODELS } = require("./constants.js");
+const {
+  OPENAI_MODELS,
+  GOOGLE_MODELS,
+  GOOGLE_EMBED_MODELS,
+  GOOGLE_IMAGE_MODELS,
+} = require("./constants.js");
 const { eval_expression } = require("@saltcorn/data/models/expression");
 const { interpolate } = require("@saltcorn/data/utils");
 const { getState } = require("@saltcorn/data/db/state");
@@ -78,12 +83,17 @@ ${domReady(`
               },
               {
                 name: "ai_sdk_provider",
-                label: "Provider", //gpt-3.5-turbo
+                label: "Provider",
                 type: "String",
                 required: true,
                 showIf: { backend: "AI SDK" },
                 attributes: {
-                  options: ["OpenAI", "Anthropic", "OpenAI-compatible"],
+                  options: [
+                    "OpenAI",
+                    "Anthropic",
+                    "OpenAI-compatible",
+                    "Google",
+                  ],
                 },
               },
               {
@@ -105,8 +115,207 @@ ${domReady(`
                 showIf: { backend: "AI SDK", ai_sdk_provider: "Anthropic" },
               },
               {
+                name: "google_api_key",
+                label: "API key",
+                sublabel: "Google Generative AI API key from Google AI Studio",
+                type: "String",
+                required: true,
+                fieldview: "password",
+                attributes: { autocomplete: "off" },
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
                 name: "model",
-                label: "Model", //gpt-3.5-turbo
+                label: "Model",
+                type: "String",
+                required: true,
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: GOOGLE_MODELS,
+                },
+              },
+              {
+                name: "embed_model",
+                label: "Embedding model",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: GOOGLE_EMBED_MODELS,
+                },
+                default: "gemini-embedding-001",
+              },
+              {
+                name: "image_model",
+                label: "Image generation model",
+                type: "String",
+                sublabel:
+                  "Used for image generation. Imagen models are recommended.",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: GOOGLE_IMAGE_MODELS,
+                },
+                default: "imagen-4.0-generate-001",
+              },
+              {
+                name: "embed_task_type",
+                label: "Embedding task type",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: [
+                    "RETRIEVAL_QUERY",
+                    "RETRIEVAL_DOCUMENT",
+                    "SEMANTIC_SIMILARITY",
+                    "CLASSIFICATION",
+                    "CLUSTERING",
+                    "QUESTION_ANSWERING",
+                    "FACT_VERIFICATION",
+                    "CODE_RETRIEVAL_QUERY",
+                  ],
+                },
+                default: "RETRIEVAL_QUERY",
+              },
+              {
+                name: "embed_dimensions",
+                label: "Embedding dimensions",
+                sublabel:
+                  "Optional. Reduce output dimensionality (e.g. 512, 768). Leave blank for model default.",
+                type: "Integer",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "thinking_level",
+                label: "Thinking level",
+                sublabel: "For Gemini 3 models. Controls reasoning depth.",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: ["minimal", "low", "medium", "high"],
+                },
+              },
+              {
+                name: "thinking_budget",
+                label: "Thinking budget (tokens)",
+                sublabel:
+                  "For Gemini 2.5 thinking models. Token budget for reasoning (e.g. 2000). Overrides thinking level if set.",
+                type: "Integer",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "search_grounding",
+                label: "Google Search grounding",
+                sublabel:
+                  "Enable Google Search as a grounding tool for real-time information",
+                type: "Bool",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "url_context",
+                label: "URL context grounding",
+                sublabel: "Enable URL context tool (up to 20 URLs per request)",
+                type: "Bool",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "code_execution",
+                label: "Code execution",
+                sublabel: "Enable Python code generation and execution tool",
+                type: "Bool",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "structuredOutputs",
+                label: "Structured outputs",
+                sublabel:
+                  "Optional. Disable if your JSON schema uses features unsupported by Google (e.g. union types)",
+                type: "Bool",
+                default: true,
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+              },
+              {
+                name: "service_tier",
+                label: "Service tier",
+                sublabel:
+                  "flex: 50% cheaper with variable latency. priority: lowest latency.",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: ["standard", "flex", "priority"],
+                },
+              },
+              {
+                name: "image_aspect_ratio",
+                label: "Image aspect ratio",
+                sublabel: "Default aspect ratio for image generation",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: [
+                    "1:1",
+                    "2:3",
+                    "3:2",
+                    "3:4",
+                    "4:3",
+                    "4:5",
+                    "5:4",
+                    "9:16",
+                    "16:9",
+                    "21:9",
+                  ],
+                },
+              },
+              {
+                name: "person_generation",
+                label: "Person generation",
+                sublabel: "Control image generation of people (Imagen models)",
+                type: "String",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                attributes: {
+                  options: ["allow_adult", "allow_all", "dont_allow"],
+                },
+              },
+              new FieldRepeat({
+                name: "safety_settings",
+                label: "Safety settings",
+                showIf: { backend: "AI SDK", ai_sdk_provider: "Google" },
+                fields: [
+                  {
+                    name: "category",
+                    label: "Category",
+                    type: "String",
+                    required: true,
+                    attributes: {
+                      options: [
+                        // "HARM_CATEGORY_UNSPECIFIED",
+                        "HARM_CATEGORY_HATE_SPEECH",
+                        "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "HARM_CATEGORY_HARASSMENT",
+                        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "HARM_CATEGORY_CIVIC_INTEGRITY",
+                      ],
+                    },
+                  },
+                  {
+                    name: "threshold",
+                    label: "Threshold",
+                    type: "String",
+                    required: true,
+                    attributes: {
+                      options: [
+                        // "HARM_BLOCK_THRESHOLD_UNSPECIFIED",
+                        "BLOCK_LOW_AND_ABOVE",
+                        "BLOCK_MEDIUM_AND_ABOVE",
+                        "BLOCK_ONLY_HIGH",
+                        "BLOCK_NONE",
+                        "OFF",
+                      ],
+                    },
+                  },
+                ],
+              }),
+              {
+                name: "model",
+                label: "Model",
                 type: "String",
                 required: true,
                 showIf: {
@@ -483,7 +692,12 @@ ${domReady(`
                     type: "String",
                     required: true,
                     attributes: {
-                      options: ["OpenAI", "Anthropic", "OpenAI-compatible"],
+                      options: [
+                        "OpenAI",
+                        "Anthropic",
+                        "OpenAI-compatible",
+                        "Google",
+                      ],
                     },
                   },
                   {
@@ -530,6 +744,16 @@ ${domReady(`
                     showIf: { alt_provider: "Anthropic" },
                   },
                   {
+                    name: "google_api_key",
+                    label: "API key",
+                    sublabel: "Google Generative AI API key",
+                    type: "String",
+                    required: true,
+                    fieldview: "password",
+                    attributes: { autocomplete: "off" },
+                    showIf: { alt_provider: "Google" },
+                  },
+                  {
                     name: "model",
                     label: "Model",
                     type: "String",
@@ -547,6 +771,16 @@ ${domReady(`
                           ],
                         },
                       ],
+                    },
+                  },
+                  {
+                    name: "model",
+                    label: "Model",
+                    type: "String",
+                    required: true,
+                    showIf: { alt_provider: "Google" },
+                    attributes: {
+                      options: GOOGLE_MODELS,
                     },
                   },
                   {
