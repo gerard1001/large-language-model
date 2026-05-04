@@ -43,8 +43,6 @@ const getEmbedding = async (config, opts) => {
           apiKey: config.api_key,
           google_api_key: config.google_api_key,
           embed_model: opts?.embed_model || config.embed_model || config.model,
-          embed_task_type: config.embed_task_type,
-          embed_dimensions: config.embed_dimensions,
         },
         opts,
       );
@@ -142,11 +140,9 @@ const getImageGenGoogleAISDK = async (config, opts) => {
   const imageModel = googleProvider.image(use_model);
 
   const providerOpts = {};
-  if (opts?.aspectRatio || config.image_aspect_ratio)
-    providerOpts.aspectRatio = opts.aspectRatio || config.image_aspect_ratio;
-  if (opts?.personGeneration || config.person_generation)
-    providerOpts.personGeneration =
-      opts.personGeneration || config.person_generation;
+  if (opts?.aspectRatio) providerOpts.aspectRatio = opts.aspectRatio;
+  if (opts?.personGeneration)
+    providerOpts.personGeneration = opts.personGeneration;
 
   if (opts?.debugResult)
     console.log("Google image request", {
@@ -572,36 +568,11 @@ const getAiSdkModel = ({ config, alt_config, userCfg }, isEmbedding) => {
         // baseURL: `https://generativelanguage.googleapis.com/v1beta`,
       });
 
-      if (isEmbedding) {
-        const embedOpts = {};
-        if (use_config.embed_task_type)
-          embedOpts.taskType = use_config.embed_task_type;
-        if (use_config.embed_dimensions)
-          embedOpts.outputDimensionality = parseInt(
-            use_config.embed_dimensions,
-          );
-        // return googleProvider.textEmbeddingModel(model_name, embedOpts);
-        return googleProvider.embeddingModel(model_name, embedOpts);
-      }
+      if (isEmbedding) return googleProvider.embeddingModel(model_name);
 
       const modelOpts = {};
       if (use_config.structuredOutputs === false)
         modelOpts.structuredOutputs = false;
-      if (use_config.safety_settings?.length)
-        modelOpts.safetySettings = use_config.safety_settings;
-      if (use_config.thinking_budget)
-        modelOpts.thinkingConfig = {
-          thinkingBudget: parseInt(use_config.thinking_budget),
-        };
-      else if (use_config.thinking_level)
-        modelOpts.thinkingConfig = { thinkingLevel: use_config.thinking_level };
-      if (use_config.audio_timestamp) modelOpts.audioTimestamp = true;
-      if (use_config.media_resolution)
-        modelOpts.mediaResolution = use_config.media_resolution;
-      if (use_config.cached_content)
-        modelOpts.cachedContent = use_config.cached_content;
-      if (use_config.service_tier)
-        modelOpts.serviceTier = use_config.service_tier;
 
       return googleProvider(model_name, modelOpts);
     }
@@ -688,19 +659,12 @@ const getCompletionAISDK = async (
     });
   }
 
-  if (
-    config.provider === "Google" &&
-    (config.search_grounding || config.url_context || config.code_execution)
-  ) {
-    const google_api_key = config.google_api_key;
-    const googleProvider = createGoogleGenerativeAI({ apiKey: google_api_key });
+  if (config.provider === "Google" && config.search_grounding) {
+    const googleProvider = createGoogleGenerativeAI({
+      apiKey: config.google_api_key,
+    });
     if (!body.tools) body.tools = {};
-    if (config.search_grounding)
-      body.tools.googleSearch = googleProvider.tools.googleSearch();
-    if (config.url_context)
-      body.tools.urlContext = googleProvider.tools.urlContext();
-    if (config.code_execution)
-      body.tools.codeExecution = googleProvider.tools.codeExecution();
+    body.tools.googleSearch = googleProvider.tools.googleSearch();
   }
 
   if (body.response_format?.type === "json_schema" && !body.output) {
@@ -1470,7 +1434,6 @@ const sanitizeSchemaForGoogle = (schema) => {
 
   return result;
 };
-
 
 function lockDownSchema(schema) {
   if (!schema || typeof schema !== "object") return schema;
